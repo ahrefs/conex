@@ -69,10 +69,10 @@ module VERIFY (L : LOGS) (V : Conex_verify.S) = struct
   (* opam >= 2.6 stores http repositories as gzipped tar archives, and passes
      the archive as dir or repository *)
   let ro_provider path =
-    if Sys.is_directory path then
-      Conex_unix_provider.fs_ro_provider path
-    else
-      Conex_unix_provider.tar_gz_ro_provider path
+    let* ft = Conex_unix_persistency.file_type path in
+    match ft with
+    | Directory -> Conex_unix_provider.fs_ro_provider path
+    | File -> Conex_unix_provider.tar_gz_ro_provider path
 
   let verify_it repodir quorum anchors incremental dir patch nostrict root_file opam ~timestamp_expiry ~now =
     let valid = Conex_opts.valid anchors in

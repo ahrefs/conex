@@ -81,63 +81,38 @@ let rec run_tar : type a e t. in_channel -> (a, e, t) Tar.t -> (a, e) result =
   fun ic -> function
   | Tar.Return r -> r
   | Tar.Bind (x, f) ->
-    (match run_tar ic x with
-     | Ok v -> run_tar ic (f v)
-     | Error e -> Error e)
+    let* v = run_tar ic x in
+    run_tar ic (f v)
   | Tar.Read len ->
     let buf = Bytes.create (Int64.to_int len) in
     let n = input ic buf 0 (Bytes.length buf) in
     Ok (Bytes.sub_string buf 0 n)
-  | Tar.Really_read len -> Ok (really_input_string ic (Int64.to_int len))
-  | Tar.Seek len -> seek_in ic (pos_in ic + Int64.to_int len) ; Ok ()
-  | Tar.High _ | Tar.Write _ -> invalid_arg "unsupported tar operation"
-
-let read_tar_gz filename =
-  let entry ?global:_ hdr acc =
-    let name = hdr.Tar.Header.file_name in
-    match hdr.Tar.Header.link_indicator with
-    | Tar.Header.Link.Normal ->
-      Tar.bind (Tar.really_read hdr.Tar.Header.file_size) (fun data ->
-          Tar.return (Ok ((name, data) :: acc)))
-    | Tar.Header.Link.Directory -> Tar.return (Ok acc)
-    | _ -> Tar.return (Error (`Msg (name ^ " is neither a file nor a directory")))
-  in
-  match
-    let ic = open_in_bin filename in
-    Fun.protect ~finally:(fun () -> close_in ic) (fun () ->
-        run_tar ic (Tar_gz.in_gzipped (Tar.fold entry [])))
-  with
-  | Ok entries -> Ok (List.rev entries)
-  | Error (`Fatal e) -> Error (Format.asprintf "%s: %a" filename Tar.pp_error e)
-  | Error `Eof -> Error (filename ^ ": unexpected end of archive")
-  | Error (`Gz msg) -> Error (filename ^ ": " ^ msg)
-  | Error (`Msg msg) -> Error (filename ^ ": " ^ msg)
-  | exception Sys_error msg -> Error msg
-  | exception End_of_file -> Error (filename ^ ": unexpected end of file")
+  | Tar.Really_read _ | Tar.Seek _ | Tar.High _ | Tar.Write _ ->
+    (* Tar_gz.in_gzipped only emits Read *)
+    invalid_arg "unsupported tar operation"
 
 let tar_gz_ro_provider filename =
-  let* entries = read_tar_gz filename in
   (* archives written by opam have no directory entries, directories are
      derived from the paths of the files *)
-  let files = Hashtbl.create 1024 and dirs = Hashtbl.create 1024 in
-  let add_item dir item = Hashtbl.replace dirs dir (item :: Hashtbl.find dirs dir) in
+  let nodes = Hashtbl.create 1024 in
+  let conflict path = Error (path_to_string path ^ " is both a file and a directory") in
   let rec add_dir path =
-    if Hashtbl.mem files path then
-      Error (path_to_string path ^ " is both a file and a directory")
-    else if Hashtbl.mem dirs path then
-      Ok ()
-    else begin
-      Hashtbl.replace dirs path [] ;
-      match List.rev path with
-      | [] -> Ok ()
-      | name :: rparent ->
-        let parent = List.rev rparent in
-        let* () = add_dir parent in
-        add_item parent (Directory, name) ;
-        Ok ()
-    end
+    match Hashtbl.find_opt nodes path with
+    | Some (`Dir items) -> Ok items
+    | Some (`File _) -> conflict path
+    | None ->
+      let* () = match List.rev path with
+        | [] -> Ok ()
+        | name :: rparent ->
+          let* parent = add_dir (List.rev rparent) in
+          parent := (Directory, name) :: !parent ;
+          Ok ()
+      in
+      let items = ref [] in
+      Hashtbl.replace nodes path (`Dir items) ;
+      Ok items
   in
-  let add_file (name, data) =
+  let add_file name data =
     let name =
       if String.is_prefix ~prefix:"./" name then String.slice ~start:2 name else name
     in
@@ -148,32 +123,59 @@ let tar_gz_ro_provider filename =
     match List.rev path with
     | [] -> Error "empty path in archive"
     | base :: rparent ->
-      let* () = add_dir (List.rev rparent) in
-      if Hashtbl.mem dirs path then
-        Error (name ^ " is both a file and a directory")
-      else begin
-        if not (Hashtbl.mem files path) then add_item (List.rev rparent) (File, base) ;
-        Hashtbl.replace files path data ;
+      let* parent = add_dir (List.rev rparent) in
+      match Hashtbl.find_opt nodes path with
+      | Some (`Dir _) -> conflict path
+      | Some (`File _) -> Hashtbl.replace nodes path (`File data) ; Ok ()
+      | None ->
+        parent := (File, base) :: !parent ;
+        Hashtbl.replace nodes path (`File data) ;
         Ok ()
-      end
   in
-  let* () = add_dir root in
-  let* () = foldM (fun () entry -> add_file entry) () entries in
-  let not_found path = Error (path_to_string path ^ " not found in " ^ filename) in
+  let entry ?global:_ hdr () =
+    let name = hdr.Tar.Header.file_name in
+    match hdr.Tar.Header.link_indicator with
+    | Tar.Header.Link.Normal ->
+      Tar.bind (Tar.really_read hdr.Tar.Header.file_size) (fun data ->
+          Tar.return (Result.map_error (fun m -> `Msg m) (add_file name data)))
+    | Tar.Header.Link.Directory -> Tar.return (Ok ())
+    | _ -> Tar.return (Error (`Msg (name ^ " is neither a file nor a directory")))
+  in
+  let* _root = add_dir root in
+  let* () =
+    match
+      let ic = open_in_bin filename in
+      Fun.protect ~finally:(fun () -> close_in ic) (fun () ->
+          run_tar ic (Tar_gz.in_gzipped (Tar.fold entry ())))
+    with
+    | Ok () -> Ok ()
+    | Error e ->
+      Error (filename ^ ": " ^ match e with
+        | `Fatal e -> Format.asprintf "%a" Tar.pp_error e
+        | `Eof -> "unexpected end of archive"
+        | `Gz msg | `Msg msg -> msg)
+    | exception Sys_error msg -> Error msg
+  in
+  let find path =
+    match Hashtbl.find_opt nodes path with
+    | Some node -> Ok node
+    | None -> Error (path_to_string path ^ " not found in " ^ filename)
+  in
   let file_type path =
-    if Hashtbl.mem files path then Ok File
-    else if Hashtbl.mem dirs path then Ok Directory
-    else not_found path
+    let* node = find path in
+    match node with `File _ -> Ok File | `Dir _ -> Ok Directory
   and read path =
-    match Hashtbl.find_opt files path with
-    | Some data -> Ok data
-    | None -> not_found path
+    let* node = find path in
+    match node with
+    | `File data -> Ok data
+    | `Dir _ -> Error (path_to_string path ^ " is a directory")
   and write _ _ = Ok ()
   and read_dir path =
-    match Hashtbl.find_opt dirs path with
-    | Some items -> Ok items
-    | None -> not_found path
-  and exists path = Hashtbl.mem files path || Hashtbl.mem dirs path
+    let* node = find path in
+    match node with
+    | `Dir items -> Ok !items
+    | `File _ -> Error (path_to_string path ^ " is not a directory")
+  and exists path = Hashtbl.mem nodes path
   in
   Ok { basedir = filename ; description = "Read only tar.gz provider" ;
        file_type ; read ; write ; read_dir ; exists }
