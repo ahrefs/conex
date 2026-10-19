@@ -118,7 +118,7 @@ let tar_gz_ro_provider filename =
     in
     let* path =
       if String.is_prefix ~prefix:"/" name then Error (name ^ " is an absolute path")
-      else string_to_path name
+      else Result.map_error (fun e -> name ^ ": " ^ e) (string_to_path name)
     in
     match List.rev path with
     | [] -> Error "empty path in archive"
@@ -126,7 +126,9 @@ let tar_gz_ro_provider filename =
       let* parent = add_dir (List.rev rparent) in
       match Hashtbl.find_opt nodes path with
       | Some (`Dir _) -> conflict path
-      | Some (`File _) -> Hashtbl.replace nodes path (`File data) ; Ok ()
+      (* opam does not resolve repeated entries consistently (the first one
+         wins for opam files), reject them instead of picking one *)
+      | Some (`File _) -> Error (name ^ " appears more than once")
       | None ->
         parent := (File, base) :: !parent ;
         Hashtbl.replace nodes path (`File data) ;
@@ -155,6 +157,7 @@ let tar_gz_ro_provider filename =
         | `Eof -> "unexpected end of archive"
         | `Gz msg | `Msg msg -> msg)
     | exception Sys_error msg -> Error msg
+    | exception (Invalid_argument msg | Failure msg) -> Error (filename ^ ": " ^ msg)
   in
   let find path =
     match Hashtbl.find_opt nodes path with

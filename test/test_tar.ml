@@ -61,7 +61,10 @@ let check_layout entries =
         (Ok "foo 1") (p.read [ "packages" ; "foo" ; "foo.1" ; "opam" ]) ;
       Alcotest.check (result Alcotest.string str_err) __LOC__
         (Error "") (p.read [ "packages" ; "baz" ]) ;
-      Alcotest.check (result items str_err) __LOC__ (Error "") (p.read_dir [ "repo" ]))
+      Alcotest.check (result Alcotest.string str_err) __LOC__ (Error "") (p.read [ "packages" ]) ;
+      Alcotest.check (result items str_err) __LOC__ (Error "") (p.read_dir [ "repo" ]) ;
+      Alcotest.check Alcotest.bool __LOC__ true (p.exists [ "packages" ; "foo" ]) ;
+      Alcotest.check Alcotest.bool __LOC__ false (p.exists [ "packages" ; "baz" ]))
 
 (* as rewritten by opam after an incremental update: no directory entries *)
 let files_only () =
@@ -94,8 +97,11 @@ let rejected () =
       "symbolic link", tar_gz [ L ("packages/foo", "/etc") ] ;
       "file and directory", tar_gz [ F ("packages/foo", "") ; F ("packages/foo/opam", "") ] ;
       "directory and file", tar_gz [ F ("packages/foo/opam", "") ; F ("packages/foo", "") ] ;
+      "repeated entry", tar_gz [ F ("./packages/foo/opam", "evil") ; F ("packages/foo/opam", "good") ] ;
       "not gzip", "not a gzip file" ;
-      "truncated", Stdlib.String.sub valid 0 (String.length valid / 2) ]
+      "truncated", Stdlib.String.sub valid 0 (String.length valid / 2) ] ;
+  Alcotest.check Alcotest.bool "missing" true
+    (Result.is_error (Conex_unix_provider.tar_gz_ro_provider "/nonexistent.tar.gz"))
 
 let tests = [
   "files only", `Quick, files_only ;

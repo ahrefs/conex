@@ -22,6 +22,8 @@ depends: [
   "base64" {>= "3.4.0"}
   "digestif" {>= "1.2.0"}
   "conf-openssl" {with-test}
+  "tar" {with-test}
+  "decompress" {with-test}
 ]
 conflicts: [ "result" {< "1.5"} ]
 build: [
