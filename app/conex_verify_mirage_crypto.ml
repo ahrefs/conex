@@ -24,7 +24,7 @@ let setup_log =
 
 let cmd =
   let term =
-    Term.(ret (const jump $ setup_log $ Keys.repo $ Keys.quorum $ Keys.anchors $ Keys.incremental $ Keys.dir $ Keys.patch $ Keys.ignore_missing $ Keys.root $ Keys.no_opam $ Keys.timestamp_expiry))
+    Term.(ret (const jump $ setup_log $ Keys.verify_repo $ Keys.quorum $ Keys.anchors $ Keys.incremental $ Keys.dir $ Keys.patch $ Keys.ignore_missing $ Keys.root $ Keys.no_opam $ Keys.timestamp_expiry))
   and info = Cmd.info "conex_verify_mirage_crypto" ~version:"%%VERSION_NUM%%"
       ~doc:Conex_verify_app.doc ~man:Conex_verify_app.man
   in

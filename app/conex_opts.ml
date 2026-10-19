@@ -68,6 +68,10 @@ module Keys = struct
     let doc = "Repository base directory (defaults to cwd)" in
     Arg.(value & opt (some dir) None & info [ "r" ; "repository" ] ~docs ~doc)
 
+  let verify_repo =
+    let doc = "Repository base directory, or gzipped tar archive" in
+    Arg.(value & opt (some file) None & info [ "r" ; "repository" ] ~docs ~doc)
+
   let anchors =
     let doc = "Trust anchors (Hex encoded hashes, seperated by ',').  Can be repeated." in
     Arg.(value & opt_all string [] & info [ "t" ; "trust-anchors" ] ~doc)
@@ -97,8 +101,8 @@ module Keys = struct
     Arg.(value & flag & info [ "incremental" ] ~doc)
 
   let dir =
-    let doc = "Directory which is verified." in
-    Arg.(value & opt (some dir) None & info [ "dir" ] ~doc)
+    let doc = "Directory, or gzipped tar archive, which is verified." in
+    Arg.(value & opt (some file) None & info [ "dir" ] ~doc)
 
   let patch =
     let doc = "Patch file which is verified." in

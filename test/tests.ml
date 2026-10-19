@@ -12,4 +12,5 @@ let () =
     ("Path", Test_path.tests) ::
     ("Tree", Test_tree.tests) ::
     ("provider", Test_provider.tests) ::
+    ("tar.gz provider", Test_tar.tests) ::
     Test_conex.tests @ more)

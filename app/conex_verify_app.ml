@@ -1,7 +1,7 @@
 open Conex_utils
 
 (* this is the barebones verify with minimal dependencies
-   (goal: cmdliner, opam-file-format, Unix, external openssl)
+   (goal: cmdliner, opam-file-format, tar, Unix, external openssl)
  *)
 
 (* to be called by opam (see http://opam.ocaml.org/doc/2.0/Manual.html#configfield-repository-validation-command, https://github.com/ocaml/opam/pull/2754/files#diff-5f9ccd1bb288197c5cf2b18366a73363R312):
@@ -66,18 +66,26 @@ module VERIFY (L : LOGS) (V : Conex_verify.S) = struct
     Printf.printf "full verification successfull\n" ;
     Ok ()
 
+  (* opam >= 2.6 stores http repositories as gzipped tar archives, and passes
+     the archive as dir or repository *)
+  let ro_provider path =
+    if Sys.is_directory path then
+      Conex_unix_provider.fs_ro_provider path
+    else
+      Conex_unix_provider.tar_gz_ro_provider path
+
   let verify_it repodir quorum anchors incremental dir patch nostrict root_file opam ~timestamp_expiry ~now =
     let valid = Conex_opts.valid anchors in
     match repodir, incremental, patch, dir with
     | Some repodir, true, Some p, None ->
-      let* io = Conex_unix_provider.fs_ro_provider repodir in
+      let* io = ro_provider repodir in
       L.debug (fun m -> m "%a" Conex_io.pp io) ;
       verify_diff io p valid quorum nostrict root_file opam ~timestamp_expiry ~now
     | _, false, None, Some "" ->
       L.debug (fun m -> m "called with no incremental, and dir = empty -> no update") ;
       Ok ()
     | _, false, None, Some d ->
-      let* io = Conex_unix_provider.fs_ro_provider d in
+      let* io = ro_provider d in
       L.debug (fun m -> m "%a" Conex_io.pp io) ;
       verify_full io valid quorum nostrict root_file opam ~timestamp_expiry ~now
     | None, _, _, _ -> Error "--repo is required"
